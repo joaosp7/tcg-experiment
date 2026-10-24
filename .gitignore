@@ -8,3 +8,8 @@ data/*.db
 data/*.db-*
 data/*.db-journal
 !app/web/data/cards.db
+.env
+.env.*
+!.env.example
+data/translation-report*.json
+data/translation-run*.log

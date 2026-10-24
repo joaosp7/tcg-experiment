@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "note": "Project terminology, not official English localization. Editorial decisions and evidence: reviews/pilot-review-2026-10-24.json. Combat and Margulis are project conventions, not verified official English Build Divide terms.",
+  "card_type": {
+    "ユニット": "Unit", "テリトリー": "Territory", "コマンド": "Command",
+    "バスター": "Buster", "エース": "Ace", "ショット": "Shot"
+  },
+  "attributes": {
+    "AI": "AI", "PSI": "PSI", "SAO": "SAO", "Vtuber": "VTuber",
+    "ハート": "Heart", "クラブ": "Club", "スペード": "Spade", "ダイヤ": "Diamond",
+    "人間": "Human", "魔族": "Demon", "天使": "Angel", "不死": "Undead",
+    "獣": "Beast", "精霊": "Spirit", "機械": "Machine", "竜": "Dragon",
+    "植物": "Plant", "神": "God", "装備": "Equipment", "魔法": "Magic",
+    "禁忌": "Forbidden", "妖精": "Fairy", "ホムンクルス": "Homunculus",
+    "アバター": "Avatar", "マスター": "Master", "サーヴァント": "Servant",
+    "属性なし": "No Attribute", "交戦": "Combat"
+  },
+  "colors": {"黒": "Black", "青": "Blue", "白": "White", "赤": "Red", "無": "Colorless"},
+  "markers": {
+    "自動": "Auto", "自": "Auto", "永続": "Continuous", "永": "Continuous",
+    "起動": "Activated", "起": "Activated", "覚醒": "Awakening",
+    "バスター": "Buster", "バスターアイコン": "Buster", "ショットアイコン": "Shot",
+    "ショットトリガー": "Shot Trigger", "ハート": "Heart", "クラブ": "Club",
+    "スペード": "Spade", "ダイヤ": "Diamond", "B": "B", "Ｂ": "B", "Ｄ": "D", "☆": "☆",
+    "鋼の錬金術師 FULLMETAL ALCHEMIST": "Fullmetal Alchemist"
+  },
+  "terms": {
+    "ユニット": "unit", "テリトリー": "territory", "コマンド": "command",
+    "墓地": "graveyard", "手札": "hand", "山札": "deck", "総コスト": "total cost",
+    "レスト": "rest", "アタック": "attack", "デコイ": "Decoy", "覚醒": "Awakening",
+    "バトル相手": "the unit it is battling", "称号": "title", "焔": "Flame",
+    "等価交換": "Equivalent Exchange", "錬成カウンター": "Alchemy Counter",
+    "霊気": "spiritual energy",
+    "黄金樹海紀行 ナウイ･ミクトラン": "Golden Sea of Trees, Nahui Mictlān"
+  },
+  "names": {
+    "マーギュリス": "Margulis",
+    "シバルバー": "Xibalba",
+    "第九層シバルバー": "Ninth Layer Xibalba",
+    "獄薔薇美血華": "Michica Gokubara",
+    "身を焦がす瞋怒": "Body-Scorching Wrath",
+    "薔薇の棘のように鋭く、美しく 獄薔薇美血華": "Sharp and Beautiful as a Rose's Thorn, Michica Gokubara"
+  }
+}
