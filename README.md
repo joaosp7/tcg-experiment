@@ -170,6 +170,16 @@ pnpm exec tsc --noEmit
 pnpm build
 ```
 
+Com o catálogo aberto por `pnpm dev` (Turbopack), a regressão visual das cartas
+compara dimensões em sete larguras e testa títulos longos e metadados ausentes:
+
+```sh
+# Executar de app/web, com o servidor de desenvolvimento ativo.
+npx --yes --package @playwright/cli playwright-cli -s=card-layout open 'http://localhost:3000/?role=ace'
+npx --yes --package @playwright/cli playwright-cli -s=card-layout run-code --filename scripts/check-card-layout.mjs
+npx --yes --package @playwright/cli playwright-cli -s=card-layout close
+```
+
 Os testes Python usam SQLite temporário e respostas OpenAI/DeepSeek simuladas. Não consomem
 créditos e não verificam acesso ao modelo nem qualidade linguística real.
 
