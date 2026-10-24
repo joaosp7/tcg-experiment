@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+:root {
+  --background: #121a2e;
+  --foreground: #d5deec;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-mat: #1a2744;
+  --color-deep: #121a2e;
+  --color-felt: #2a3c5e;
+  --color-stock: #f3efe4;
+  --color-ink: #1b2433;
+  --color-gold: #e0b85a;
+  --color-mist: #d5deec;
+  --color-line: #405272;
+  --font-display: var(--font-barlow), sans-serif;
+  --font-mono: var(--font-plex), ui-monospace, monospace;
+}
+
+body {
+  background:
+    radial-gradient(1100px 420px at 8% -10%, #2c416c 0%, transparent 58%),
+    var(--background);
+  color: var(--foreground);
+  font-family:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Yu Gothic",
+    Meiryo, sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid #e0b85a;
+  outline-offset: 2px;
+}
