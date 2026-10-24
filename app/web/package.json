@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.16"
   },
   "scripts": {
     "predev": "node scripts/sync-db.mjs",
@@ -11,6 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --test scripts/test-cards.mjs",
     "lint": "eslint"
   },
   "dependencies": {

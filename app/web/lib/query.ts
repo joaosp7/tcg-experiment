@@ -17,6 +17,9 @@ export type Facets = {
   rarities: string[];
   sets: string[];
   attributes: string[];
+  typeLabels: Record<string, string>;
+  setLabels: Record<string, string>;
+  attributeLabels: Record<string, string>;
 };
 
 export type CardQuery = {
@@ -28,6 +31,13 @@ export type CardQuery = {
   roles: RoleKey[];
   page: number;
 };
+
+export function facetValue(value: string, labels: Record<string, string>): string {
+  if (Object.hasOwn(labels, value)) return value;
+  const normalized = value.toLocaleLowerCase("en");
+  const matches = Object.entries(labels).filter(([, label]) => label.toLocaleLowerCase("en") === normalized);
+  return matches.length === 1 ? matches[0][0] : value;
+}
 
 const ROLE_KEYS = new Set<string>(ROLES.map((role) => role.key));
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ROLES, type CardQuery, type Facets } from "@/lib/query";
+import { facetValue, ROLES, type CardQuery, type Facets } from "@/lib/query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ChangeEvent, ReactNode } from "react";
@@ -15,6 +15,9 @@ export function Filters({ query, facets }: { query: CardQuery; facets: Facets })
   const active = Boolean(
     query.q || query.type || query.rarity || query.set || query.attribute || query.roles.length,
   );
+  const selectedType = facetValue(query.type, facets.typeLabels);
+  const selectedSet = facetValue(query.set, facets.setLabels);
+  const selectedAttribute = facetValue(query.attribute, facets.attributeLabels);
 
   function submit(form: HTMLFormElement) {
     const data = new FormData(form);
@@ -33,13 +36,6 @@ export function Filters({ query, facets }: { query: CardQuery; facets: Facets })
     const form = event.currentTarget.form;
     if (!form) return;
     if (event.currentTarget instanceof HTMLInputElement && event.currentTarget.name === "q") return;
-    if (
-      event.currentTarget instanceof HTMLInputElement &&
-      (event.currentTarget.name === "set" || event.currentTarget.name === "attribute")
-    ) {
-      const options = event.currentTarget.name === "set" ? facets.sets : facets.attributes;
-      if (event.currentTarget.value !== "" && !options.includes(event.currentTarget.value)) return;
-    }
     submit(form);
   }
 
@@ -59,7 +55,7 @@ export function Filters({ query, facets }: { query: CardQuery; facets: Facets })
           <input
             name="q"
             defaultValue={query.q}
-            placeholder="Name, effect, illustrator, or card id"
+            placeholder="Name, effect, type, attribute, set, cost, illustrator, or card id"
             className="w-full border border-line bg-deep px-3 py-2 text-stock placeholder:text-mist/50"
           />
         </label>
@@ -75,14 +71,14 @@ export function Filters({ query, facets }: { query: CardQuery; facets: Facets })
         <Field label="Type">
           <select
             name="type"
-            defaultValue={query.type}
+            defaultValue={selectedType}
             onChange={onChoice}
             className="w-full border border-line bg-deep px-2 py-2 text-stock"
           >
             <option value="">Any type</option>
-            {withCurrent(facets.types, query.type).map((type) => (
+            {withCurrent(facets.types, selectedType).map((type) => (
               <option key={type} value={type}>
-                {type}
+                {facets.typeLabels[type] || type}
               </option>
             ))}
           </select>
@@ -103,34 +99,30 @@ export function Filters({ query, facets }: { query: CardQuery; facets: Facets })
           </select>
         </Field>
         <Field label="Set">
-          <input
+          <select
             name="set"
-            list="set-options"
-            defaultValue={query.set}
-            placeholder="Any set"
+            defaultValue={selectedSet}
             onChange={onChoice}
             className="w-full border border-line bg-deep px-2 py-2 text-stock placeholder:text-mist/50"
-          />
-          <datalist id="set-options">
-            {facets.sets.map((set) => (
-              <option key={set} value={set} />
+          >
+            <option value="">Any set</option>
+            {withCurrent(facets.sets, selectedSet).map((set) => (
+              <option key={set} value={set}>{facets.setLabels[set] || set}</option>
             ))}
-          </datalist>
+          </select>
         </Field>
         <Field label="Attribute">
-          <input
+          <select
             name="attribute"
-            list="attribute-options"
-            defaultValue={query.attribute}
-            placeholder="Any attribute"
+            defaultValue={selectedAttribute}
             onChange={onChoice}
             className="w-full border border-line bg-deep px-2 py-2 text-stock placeholder:text-mist/50"
-          />
-          <datalist id="attribute-options">
-            {facets.attributes.map((attribute) => (
-              <option key={attribute} value={attribute} />
+          >
+            <option value="">Any attribute</option>
+            {withCurrent(facets.attributes, selectedAttribute).map((attribute) => (
+              <option key={attribute} value={attribute}>{facets.attributeLabels[attribute] || attribute}</option>
             ))}
-          </datalist>
+          </select>
         </Field>
       </div>
 

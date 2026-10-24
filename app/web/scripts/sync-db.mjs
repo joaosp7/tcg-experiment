@@ -1,5 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { backup, DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,12 +9,26 @@ const source = path.resolve(webRoot, "../../data/cards.db");
 
 if (existsSync(source)) {
   mkdirSync(path.dirname(dest), { recursive: true });
-  copyFileSync(source, dest);
-  const db = new DatabaseSync(dest);
-  db.prepare("PRAGMA journal_mode=DELETE").get();
-  db.close();
-  rmSync(`${dest}-wal`, { force: true });
-  rmSync(`${dest}-shm`, { force: true });
+  const temporary = `${dest}.${process.pid}.tmp`;
+  const db = new DatabaseSync(source, { readOnly: true });
+  try {
+    await backup(db, temporary);
+    const snapshot = new DatabaseSync(temporary);
+    try {
+      snapshot.prepare("PRAGMA journal_mode=DELETE").get();
+    } finally {
+      snapshot.close();
+    }
+    // Run before starting the app, so no reader keeps the old database open.
+    rmSync(`${dest}-wal`, { force: true });
+    rmSync(`${dest}-shm`, { force: true });
+    renameSync(temporary, dest);
+  } finally {
+    db.close();
+    rmSync(temporary, { force: true });
+    rmSync(`${temporary}-wal`, { force: true });
+    rmSync(`${temporary}-shm`, { force: true });
+  }
   console.log(`synced ${source} -> ${dest}`);
 } else if (existsSync(dest)) {
   console.log(`using bundled ${dest}`);

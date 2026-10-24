@@ -57,6 +57,19 @@ async function CardView({ params }: Pick<CardRouteProps, "params">) {
         {card.flavor_text ? (
           <p className="border-l-2 border-gold pl-3 text-mist italic">{card.flavor_text}</p>
         ) : null}
+        {card.hasTranslation ? (
+          <div className="text-sm text-mist">
+            <p>Unofficial English translation. Refer to the Japanese original for rules.</p>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-gold">Japanese original</summary>
+              <div lang="ja" className="mt-3 flex flex-col gap-3 whitespace-pre-wrap">
+                {Object.entries(card.japanese).map(([field, value]) => value ? (
+                  <p key={field}>{value}</p>
+                ) : null)}
+              </div>
+            </details>
+          </div>
+        ) : null}
         {stats.length ? (
           <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
             {stats.map(([label, value]) => (
