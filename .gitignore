@@ -7,3 +7,4 @@ images/*.png
 data/*.db
 data/*.db-*
 data/*.db-journal
+!app/web/data/cards.db
