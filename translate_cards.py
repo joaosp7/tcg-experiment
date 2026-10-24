@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 FIELDS = ("name", "card_type", "attributes", "effect_text", "flavor_text", "cost", "set_name")
 PROMPT_VERSION = "1"
 DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_MODELS = {"openai": DEFAULT_MODEL, "deepseek": "deepseek-flash"}
 JAPANESE = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fd-\u30ff\u3400-\u9fff]")
 MARKER = re.compile(r"⁅([^⁅⁆]*)⁆")
 TOKEN = re.compile(r"__BD_TOKEN_\d+__")
@@ -60,7 +61,7 @@ def load_env() -> None:
     if path.exists():
         for line in path.read_text().splitlines():
             key, separator, value = line.strip().removeprefix("export ").partition("=")
-            if separator and key.strip() in {"OPENAI_API_KEY", "OPENAI_MODEL"}:
+            if separator and key.strip() in {"OPENAI_API_KEY", "OPENAI_MODEL", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "TRANSLATION_PROVIDER"}:
                 os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
@@ -78,7 +79,8 @@ def migrate(db: sqlite3.Connection, path: Path, *, backup: bool = True) -> None:
         raise ValueError("Database has no cards table")
     missing = [f"{field}_en" for field in FIELDS if f"{field}_en" not in columns]
     has_jobs = db.execute("SELECT 1 FROM sqlite_master WHERE name='translation_jobs'").fetchone()
-    if not missing and has_jobs:
+    job_columns = {r["name"] for r in db.execute("PRAGMA table_info(translation_jobs)")}
+    if not missing and has_jobs and "provider" in job_columns:
         return
     if backup:
         backup_path = path.with_name(f"{path.stem}.before-translation-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.db")
@@ -97,6 +99,7 @@ def migrate(db: sqlite3.Connection, path: Path, *, backup: bool = True) -> None:
             glossary_hash TEXT NOT NULL,
             prompt_version TEXT NOT NULL,
             model TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'openai',
             method TEXT NOT NULL,
             status TEXT NOT NULL CHECK(status IN ('validated','needs_review','reviewed','failed','empty')),
             translation TEXT,
@@ -106,8 +109,13 @@ def migrate(db: sqlite3.Connection, path: Path, *, backup: bool = True) -> None:
             updated_at TEXT NOT NULL,
             PRIMARY KEY(card_id, field)
         )""")
-        db.execute("""CREATE INDEX IF NOT EXISTS translation_cache ON translation_jobs
-            (field, source_hash, context_hash, glossary_hash, prompt_version, model, status)""")
+        if has_jobs and "provider" not in job_columns:
+            db.execute("ALTER TABLE translation_jobs ADD COLUMN provider TEXT NOT NULL DEFAULT 'openai'")
+            db.execute("UPDATE translation_jobs SET provider='manual' WHERE method='manual'")
+            db.execute("UPDATE translation_jobs SET provider='rules' WHERE method='rules'")
+        db.execute("DROP INDEX IF EXISTS translation_cache")
+        db.execute("""CREATE INDEX translation_cache ON translation_jobs
+            (field, source_hash, context_hash, glossary_hash, prompt_version, provider, model, status)""")
 
 
 def rule_translation(field: str, source: str, glossary: dict) -> str | None:
@@ -180,11 +188,11 @@ def context_for(card: dict, field: str) -> dict:
     return {k: card.get(k) for k in ("name", "card_type", "attributes", "tags")}
 
 
-class OpenAITranslator:
+class JSONTranslator:
     def __init__(self, model: str, max_output_tokens: int = 4096):
-        self.key = os.environ.get("OPENAI_API_KEY")
+        self.key = os.environ.get(self.key_env)
         if not self.key:
-            raise ValueError("Set OPENAI_API_KEY in the environment or project .env before an API run")
+            raise ValueError(f"Set {self.key_env} in the environment or project .env before an API run")
         self.model = model
         self.max_output_tokens = max_output_tokens
 
@@ -192,17 +200,8 @@ class OpenAITranslator:
         protected, replacements = protect(source, glossary)
         legend = {token: {"japanese": match[1], "english_display": replacements[token]}
                   for token, match in zip(replacements, MARKER.finditer(source))}
-        payload = {
-            "model": self.model, "store": False, "instructions": INSTRUCTIONS,
-            "reasoning": {"effort": "low"}, "max_output_tokens": self.max_output_tokens,
-            "input": json.dumps({"field": field, "source": protected, "context": context,
-                                 "protected_markers": legend,
-                                 "glossary": glossary}, ensure_ascii=False),
-            "text": {"format": {"type": "json_schema", "name": "card_translation",
-                                  "strict": True, "schema": SCHEMA}},
-        }
-        data = self.request(payload)
-        result = self.response_content(data)
+        result = self.complete(INSTRUCTIONS, {"field": field, "source": protected, "context": context,
+                                             "protected_markers": legend, "glossary": glossary}, SCHEMA)
         if result["translation"] is None:
             return result
         try:
@@ -214,7 +213,7 @@ class OpenAITranslator:
 
     def request(self, payload: dict) -> dict:
         for attempt in range(4):
-            request = Request("https://api.openai.com/v1/responses", data=json.dumps(payload).encode(),
+            request = Request(self.endpoint, data=json.dumps(payload).encode(),
                               headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
             try:
                 with urlopen(request, timeout=120) as response:
@@ -229,25 +228,28 @@ class OpenAITranslator:
                     except (ValueError, TypeError):
                         error = {}
                     if error.get("code") in ("insufficient_quota", "billing_hard_limit_reached"):
-                        raise RuntimeError("OpenAI quota exhausted; check project quota and billing") from None
+                        raise RuntimeError(f"{self.provider_name} quota exhausted; check project quota and billing") from None
                     try:
                         retry_after = float(exc.headers.get("retry-after", 0))
                     except (ValueError, TypeError):
                         retry_after = 0
                     if retry_after > 30:
-                        raise RuntimeError(f"OpenAI rate limit reached; Retry-After={retry_after:g}s. "
+                        raise RuntimeError(f"{self.provider_name} rate limit reached; Retry-After={retry_after:g}s. "
                                            "Progress saved; resume later with --retry-failed or increase project limits") from None
                     delay = max(delay, retry_after)
                 if exc.code not in (408, 409, 429) and exc.code < 500:
-                    raise RuntimeError(f"OpenAI HTTP {exc.code}; check model access, key and billing") from None
+                    raise RuntimeError(f"{self.provider_name} HTTP {exc.code}; check model access, key and billing") from None
                 if attempt == 3:
-                    raise RuntimeError(f"OpenAI HTTP {exc.code} after retries") from None
+                    raise RuntimeError(f"{self.provider_name} HTTP {exc.code} after retries") from None
                 time.sleep(delay)
             except (URLError, TimeoutError, OSError):
                 if attempt == 3:
-                    raise RuntimeError("OpenAI connection failed after retries") from None
+                    raise RuntimeError(f"{self.provider_name} connection failed after retries") from None
                 time.sleep(min(30, 2 ** attempt))
         return data
+
+    def complete(self, instructions: str, inputs: dict, schema: dict) -> dict:
+        raise NotImplementedError
 
     @staticmethod
     def response_content(data: dict) -> dict:
@@ -298,14 +300,9 @@ class OpenAITranslator:
                                for token, match in zip(replacements, MARKER.finditer(item["source"]))}}
         schema = {"type": "object", "additionalProperties": False,
                   "properties": {key: SCHEMA for key in inputs}, "required": list(inputs)}
-        data = self.request({
-            "model": self.model, "store": False,
-            "instructions": INSTRUCTIONS + "\nTranslate each keyed item independently. Return exactly the same keys. Never move text between items.",
-            "reasoning": {"effort": "low"}, "max_output_tokens": self.max_output_tokens,
-            "input": json.dumps({"items": inputs, "glossary": glossary}, ensure_ascii=False),
-            "text": {"format": {"type": "json_schema", "name": "card_translations", "strict": True, "schema": schema}},
-        })
-        response = self.response_content(data)
+        response = self.complete(
+            INSTRUCTIONS + "\nTranslate each keyed item independently. Return exactly the same keys. Never move text between items.",
+            {"items": inputs, "glossary": glossary}, schema)
         try:
             answers = json.loads(response["translation"]) if response["translation"] is not None else None
         except (ValueError, TypeError):
@@ -317,25 +314,85 @@ class OpenAITranslator:
         return {"items": results, "usage": response["usage"], "response_id": response["response_id"]}
 
 
+class OpenAITranslator(JSONTranslator):
+    endpoint = "https://api.openai.com/v1/responses"
+    provider_name = "OpenAI"
+    key_env = "OPENAI_API_KEY"
+
+    def complete(self, instructions: str, inputs: dict, schema: dict) -> dict:
+        return self.response_content(self.request({
+            "model": self.model, "store": False, "instructions": instructions,
+            "reasoning": {"effort": "low"}, "max_output_tokens": self.max_output_tokens,
+            "input": json.dumps(inputs, ensure_ascii=False),
+            "text": {"format": {"type": "json_schema", "name": "card_translation", "strict": True, "schema": schema}},
+        }))
+
+
+class DeepSeekTranslator(JSONTranslator):
+    endpoint = "https://api.deepseek.com/chat/completions"
+    provider_name = "DeepSeek"
+    key_env = "DEEPSEEK_API_KEY"
+
+    def complete(self, instructions: str, inputs: dict, schema: dict) -> dict:
+        example = {"translation": "English translation", "needs_review": False, "notes": ""}
+        if "items" in inputs:
+            example = {key: example for key in inputs["items"]}
+        data = self.request({
+            "model": self.model, "max_tokens": self.max_output_tokens, "stream": False,
+            "thinking": {"type": "disabled"}, "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": instructions + "\nReturn only JSON conforming to this schema:\n"
+                 + json.dumps(schema) + "\nEXAMPLE JSON OUTPUT:\n" + json.dumps(example)},
+                {"role": "user", "content": json.dumps(inputs, ensure_ascii=False)},
+            ],
+        })
+        usage = dict(data.get("usage") or {})
+        usage["input_tokens"] = usage.get("prompt_tokens", 0)
+        usage["output_tokens"] = usage.get("completion_tokens", 0)
+        result = {"translation": None, "issues": [], "usage": usage, "response_id": data.get("id")}
+        choices = data.get("choices") or []
+        if len(choices) != 1 or not isinstance(choices[0], dict):
+            result["issues"] = ["Invalid DeepSeek response choices"]
+            return result
+        choice = choices[0]
+        if choice.get("finish_reason") != "stop":
+            result["issues"] = [f"DeepSeek response stopped: {choice.get('finish_reason')}"]
+            return result
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if message.get("refusal") or not isinstance(content, str) or not content.strip():
+            result["issues"] = ["DeepSeek returned empty or refused content"]
+            return result
+        result["translation"] = content
+        return result
+
+
+def translator_for(args: argparse.Namespace) -> JSONTranslator:
+    provider = getattr(args, "provider", "openai")
+    cls = {"openai": OpenAITranslator, "deepseek": DeepSeekTranslator}[provider]
+    return cls(args.model, args.max_output_tokens)
+
+
 def save_job(db: sqlite3.Connection, card: dict, field: str, glossary_hash: str, model: str,
              method: str, status: str, translation: str | None, notes: str = "",
-             usage: dict | None = None, response_id: str | None = None) -> None:
+             usage: dict | None = None, response_id: str | None = None, provider: str = "openai") -> None:
     with db:
         previous = db.execute(f"""SELECT j.source_hash, c.{field}_en AS published
             FROM cards c LEFT JOIN translation_jobs j ON j.card_id=c.card_id AND j.field=?
             WHERE c.card_id=?""", (field, card["card_id"])).fetchone()
         db.execute("""INSERT INTO translation_jobs
             (card_id,field,source_hash,context_hash,glossary_hash,prompt_version,model,method,
-             status,translation,notes,usage_json,response_id,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(card_id,field) DO UPDATE SET
+             status,translation,notes,usage_json,response_id,updated_at,provider)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(card_id,field) DO UPDATE SET
             source_hash=excluded.source_hash,context_hash=excluded.context_hash,
             glossary_hash=excluded.glossary_hash,prompt_version=excluded.prompt_version,
-            model=excluded.model,method=excluded.method,status=excluded.status,
+            model=excluded.model,provider=excluded.provider,method=excluded.method,status=excluded.status,
             translation=excluded.translation,notes=excluded.notes,usage_json=excluded.usage_json,
             response_id=excluded.response_id,updated_at=excluded.updated_at""",
             (card["card_id"], field, digest(card.get(field) or ""), digest(context_for(card, field)),
              glossary_hash, PROMPT_VERSION, model, method, status, translation, notes,
-             json.dumps(usage or {}), response_id, datetime.now(timezone.utc).isoformat()))
+             json.dumps(usage or {}), response_id, datetime.now(timezone.utc).isoformat(), provider))
         # Failed attempts must not erase an earlier translation of the unchanged source.
         published = translation if status in ("validated", "reviewed", "empty") else None
         if (status in ("failed", "needs_review") and previous
@@ -362,20 +419,27 @@ def pending(card: dict, field: str, job: dict | None, gh: str, model: str, args:
         return False  # Manual edits are protected even if configuration changes.
     if not job:
         return not card.get(f"{field}_en")  # Preserve existing translations with no metadata, too.
-    current = (job["source_hash"] == digest(card.get(field) or "")
-               and job["context_hash"] == digest(context_for(card, field))
-               and job["glossary_hash"] == gh and job["prompt_version"] == PROMPT_VERSION
-               and (job["method"] == "rules" or job["model"] == model))
-    if not current:
+    same_source = (job["source_hash"] == digest(card.get(field) or "")
+                   and job["context_hash"] == digest(context_for(card, field)))
+    if not same_source:
         return True
+    if job["status"] == "needs_review":
+        return args.retry_review
+    current_config = job["glossary_hash"] == gh and job["prompt_version"] == PROMPT_VERSION
+    same_provider = job.get("provider", "openai") == getattr(args, "provider", "openai")
+    if not current_config:
+        return True
+    if job["status"] == "validated":
+        return getattr(args, "retranslate", False)
     return ((job["status"] == "failed" and args.retry_failed)
-            or (job["status"] == "needs_review" and args.retry_review))
+            or (job["status"] == "failed" and (not same_provider or job["model"] != model)))
 
 
 def run(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -> int:
     if getattr(args, "workers", 1) > 1 or getattr(args, "batch_size", 1) > 1:
         return run_bulk(db, glossary, args)
     gh = digest(glossary)
+    provider = getattr(args, "provider", "openai")
     jobs = {(r["card_id"], r["field"]): dict(r) for r in db.execute("SELECT * FROM translation_jobs")}
     cards = [dict(r) for r in db.execute("SELECT * FROM cards ORDER BY card_id")]
     cards = [c for c in cards if (not args.card_id or c["card_id"] in args.card_id)
@@ -392,19 +456,19 @@ def run(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -> int
             if translated is not None:
                 counts["rules"] += 1
                 if not args.dry_run:
-                    save_job(db, card, field, gh, args.model, "rules", "validated" if source else "empty", translated)
+                    save_job(db, card, field, gh, args.model, "rules", "validated" if source else "empty", translated, provider="rules")
                 continue
             if args.rules_only:
                 counts["requires_ai"] += 1
                 continue
             cached = db.execute("""SELECT translation FROM translation_jobs WHERE field=?
                 AND source_hash=? AND context_hash=? AND glossary_hash=? AND prompt_version=?
-                AND model=? AND status IN ('validated','reviewed') LIMIT 1""",
-                (field, digest(source), digest(context_for(card, field)), gh, PROMPT_VERSION, args.model)).fetchone()
-            if cached:
+                AND provider=? AND model=? AND status IN ('validated','reviewed') LIMIT 1""",
+                (field, digest(source), digest(context_for(card, field)), gh, PROMPT_VERSION, provider, args.model)).fetchone()
+            if cached and not getattr(args, "retranslate", False):
                 counts["cached"] += 1
                 if not args.dry_run:
-                    save_job(db, card, field, gh, args.model, "cache", "validated", cached[0])
+                    save_job(db, card, field, gh, args.model, "cache", "validated", cached[0], provider=provider)
                 continue
             if args.dry_run:
                 counts["requires_ai"] += 1
@@ -414,19 +478,19 @@ def run(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -> int
                 print(json.dumps(counts, indent=2))
                 return 0
             if translator is None:
-                translator = OpenAITranslator(args.model, args.max_output_tokens)
+                translator = translator_for(args)
             counts["requests"] += 1
             try:
                 result = translator.translate(field, source, context_for(card, field), glossary)
             except RuntimeError as exc:
-                save_job(db, card, field, gh, args.model, "openai", "failed", None, str(exc))
+                save_job(db, card, field, gh, args.model, provider, "failed", None, str(exc), provider=provider)
                 print(f"Stopped at card {card['card_id']} / {field}: {exc}")
                 return 1  # Stop on provider errors instead of failing the entire remaining archive.
             status = "needs_review" if result["issues"] else "validated"
             if result["translation"] is None:
                 status = "failed"
-            save_job(db, card, field, gh, args.model, "openai", status, result["translation"],
-                     "; ".join(result["issues"]), result["usage"], result["response_id"])
+            save_job(db, card, field, gh, args.model, provider, status, result["translation"],
+                     "; ".join(result["issues"]), result["usage"], result["response_id"], provider=provider)
             counts[status] += 1
             for key in ("input_tokens", "output_tokens"):
                 counts[key] += result["usage"].get(key, 0)
@@ -438,6 +502,7 @@ def run(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -> int
 def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -> int:
     """Only HTTP calls run in workers. The main thread owns all SQLite writes."""
     gh = digest(glossary)
+    provider = getattr(args, "provider", "openai")
     jobs = {(r["card_id"], r["field"]): dict(r) for r in db.execute("SELECT * FROM translation_jobs")}
     cards = [dict(r) for r in db.execute("SELECT * FROM cards ORDER BY card_id")]
     cards = [c for c in cards if (not args.card_id or c["card_id"] in args.card_id)
@@ -454,7 +519,7 @@ def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -
             if translated is not None:
                 counts["rules"] += 1
                 if not args.dry_run:
-                    save_job(db, card, field, gh, args.model, "rules", "validated" if source else "empty", translated)
+                    save_job(db, card, field, gh, args.model, "rules", "validated" if source else "empty", translated, provider="rules")
                 continue
             if args.rules_only:
                 counts["requires_ai"] += 1
@@ -462,12 +527,12 @@ def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -
             context = context_for(card, field)
             cached = db.execute("""SELECT translation FROM translation_jobs WHERE field=?
                 AND source_hash=? AND context_hash=? AND glossary_hash=? AND prompt_version=?
-                AND model=? AND status IN ('validated','reviewed') LIMIT 1""",
-                (field, digest(source), digest(context), gh, PROMPT_VERSION, args.model)).fetchone()
-            if cached:
+                AND provider=? AND model=? AND status IN ('validated','reviewed') LIMIT 1""",
+                (field, digest(source), digest(context), gh, PROMPT_VERSION, provider, args.model)).fetchone()
+            if cached and not getattr(args, "retranslate", False):
                 counts["cached"] += 1
                 if not args.dry_run:
-                    save_job(db, card, field, gh, args.model, "cache", "validated", cached[0])
+                    save_job(db, card, field, gh, args.model, "cache", "validated", cached[0], provider=provider)
                 continue
             fingerprint = digest([field, source, context])
             if fingerprint not in groups:
@@ -481,7 +546,7 @@ def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -
     if args.dry_run or not batches:
         print(json.dumps(counts | {"unique_ai_fields": len(items), "planned_requests": len(batches)}, indent=2))
         return 0
-    translator = OpenAITranslator(args.model, args.max_output_tokens)
+    translator = translator_for(args)
     stopped = False
     iterator = iter(batches[:args.max_requests])
     completed = 0
@@ -504,7 +569,7 @@ def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -
                     stopped = True
                     for item in batch:
                         for card in item["cards"]:
-                            save_job(db, card, item["field"], gh, args.model, "openai", "failed", None, str(exc))
+                            save_job(db, card, item["field"], gh, args.model, provider, "failed", None, str(exc), provider=provider)
                             counts["failed"] += 1
                     print(f"Provider failure; stopping new requests: {exc}", flush=True)
                     continue
@@ -519,8 +584,8 @@ def run_bulk(db: sqlite3.Connection, glossary: dict, args: argparse.Namespace) -
                         status = "failed"
                     for index, card in enumerate(item["cards"]):
                         save_job(db, card, item["field"], gh, args.model,
-                                 "openai" if index == 0 else "cache", status, result["translation"],
-                                 "; ".join(result["issues"]), usage, response["response_id"])
+                                 provider if index == 0 else "cache", status, result["translation"],
+                                 "; ".join(result["issues"]), usage, response["response_id"], provider=provider)
                         usage = {}
                         counts[status] += 1
                         counts["fields_saved"] += 1
@@ -581,7 +646,9 @@ def main() -> int:
     selection.add_argument("--all", action="store_true")
     execute.add_argument("--fields", nargs="+", choices=FIELDS, default=list(FIELDS))
     execute.add_argument("--card-id", type=int, action="append")
-    execute.add_argument("--model", default=os.environ.get("OPENAI_MODEL", DEFAULT_MODEL))
+    execute.add_argument("--provider", choices=DEFAULT_MODELS, default=os.environ.get("TRANSLATION_PROVIDER", "deepseek"))
+    execute.add_argument("--model", help="Provider model ID; defaults to DEEPSEEK_MODEL or OPENAI_MODEL")
+    execute.add_argument("--retranslate", action="store_true", help="Regenerate automatic translations with the selected provider/model")
     execute.add_argument("--max-requests", type=int, default=500, help="Maximum logical API calls this run (each can retry up to 3 times)")
     execute.add_argument("--max-output-tokens", type=int, default=4096)
     execute.add_argument("--workers", type=int, default=1, help="Concurrent HTTP requests; SQLite writes stay on the main thread")
@@ -598,6 +665,10 @@ def main() -> int:
     review.add_argument("--text", required=True)
     review.add_argument("--allow-warnings", action="store_true", help="Explicitly accept validation warnings after human review")
     args = parser.parse_args()
+    if args.command == "run":
+        if args.provider not in DEFAULT_MODELS:
+            parser.error("TRANSLATION_PROVIDER must be openai or deepseek")
+        args.model = args.model or os.environ.get(f"{args.provider.upper()}_MODEL") or DEFAULT_MODELS[args.provider]
     if args.command == "run" and (args.limit < 1 or args.max_requests < 1 or args.max_output_tokens < 128):
         parser.error("limit and max-requests must be positive; max-output-tokens must be at least 128")
     if args.command == "run" and not (1 <= args.workers <= 32 and 1 <= args.batch_size <= 32):
@@ -628,9 +699,9 @@ def main() -> int:
             issues = validation_issues(args.field, row[args.field] or "", args.text)
             if not args.text.strip() or (issues and not args.allow_warnings):
                 raise ValueError("Review rejected: " + "; ".join(issues))
-            save_job(db, dict(row), args.field, digest(glossary), "manual", "manual", "reviewed", args.text, "; ".join(issues))
+            save_job(db, dict(row), args.field, digest(glossary), "manual", "manual", "reviewed", args.text, "; ".join(issues), provider="manual")
             return 0
-        if readonly and not db.execute("SELECT 1 FROM sqlite_master WHERE name='translation_jobs'").fetchone():
+        if readonly and "provider" not in {r["name"] for r in db.execute("PRAGMA table_info(translation_jobs)")}:
             # Simulate migration on an in-memory copy, so dry-run works on an untouched archive.
             memory = sqlite3.connect(":memory:")
             memory.row_factory = sqlite3.Row

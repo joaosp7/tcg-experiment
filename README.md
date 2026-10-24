@@ -6,12 +6,18 @@ Acervo fechado de 7.734 cartas. O scraper original coleta os dados japoneses em
 ## Tradução para inglês
 
 O script `translate_cards.py` usa a biblioteca padrão do Python, sem dependências
-adicionais. OpenAI Responses API, modelo padrão **`gpt-6-luna`**, reasoning `low`,
-saída JSON Schema estrita e `store=false`. O modelo pode ser alterado com
-`OPENAI_MODEL` ou `--model`. É necessária uma chave da API OpenAI com acesso ao
-modelo e faturamento; a sessão do Codex não configura essa chave automaticamente.
+adicionais. O provedor padrão é **DeepSeek**, com modelo **`deepseek-flash`**,
+Chat Completions, thinking desativado e saída JSON validada localmente.
+Configure `DEEPSEEK_API_KEY` no ambiente ou em `.env`. `DEEPSEEK_MODEL` permite
+selecionar outro modelo. A integração não usa `OPENAI_API_KEY` como fallback.
 
-Copie `.env.example` para `.env` e preencha `OPENAI_API_KEY` localmente. O arquivo
+OpenAI continua disponível com `--provider openai`: Responses API, modelo padrão
+`gpt-6-luna`, reasoning `low`, JSON Schema estrito e `store=false`.
+O modelo OpenAI pode ser alterado com `OPENAI_MODEL` ou `--model`.
+Use `--provider deepseek|openai` ou `TRANSLATION_PROVIDER` para escolher o provedor;
+sem configuração, o padrão é DeepSeek. A sessão do Codex não configura as chaves.
+
+Copie `.env.example` para `.env` e preencha `DEEPSEEK_API_KEY` localmente. O arquivo
 é ignorado pelo Git. Variáveis do ambiente têm precedência sobre `.env`.
 
 Execute da raiz do projeto:
@@ -28,7 +34,7 @@ uv run python translate_cards.py run --all --rules-only
 
 # Piloto: até 100 cartas pendentes distribuídas por tipo e jogo.
 # Limite de 500 chamadas lógicas; cada chamada pode ter até 3 retries.
-uv run python translate_cards.py run --limit 100 --max-requests 500
+uv run python translate_cards.py run --provider deepseek --limit 100 --max-requests 500
 
 # Relatório com cobertura, candidatos, japonês original e erros.
 uv run python translate_cards.py report --output data/translation-report.json
@@ -37,7 +43,7 @@ uv run python translate_cards.py report --output data/translation-report.json
 uv run python translate_cards.py run --all --max-requests 500
 
 # Acervo completo: agrupar 12 campos por requisição, com até 8 requisições em paralelo.
-uv run python translate_cards.py run --all --workers 8 --batch-size 12 --max-output-tokens 16384 --max-requests 2000
+uv run python translate_cards.py run --provider deepseek --all --workers 8 --batch-size 12 --max-output-tokens 16384 --max-requests 2000
 
 # Falhas e candidatos sinalizados não são reenviados sem opção explícita.
 uv run python translate_cards.py run --all --retry-failed
@@ -85,11 +91,22 @@ japonês não mudou. Sem tradução anterior, a coluna `_en` fica `NULL`. Mudan�
 original invalidam o valor anterior. Isso evita que limites da API removam conteúdo
 já disponível durante uma atualização do glossário.
 
-O cache exige igualdade de texto, contexto, glossário, instruções e modelo.
+O cache exige igualdade de texto, contexto, glossário, instruções, provedor e modelo.
 Não usa somente nome ou `card_group_id` para reaproveitar efeitos.
-Mudanças no glossário/instruções/modelo reprocessam traduções automáticas na próxima
-execução; os valores existentes permanecem publicados até o campo ser processado.
-Mudanças não substituem revisões manuais. Para alterar uma revisão, use `review` novamente.
+Trocar apenas o provedor/modelo preserva traduções válidas. Para regenerá-las,
+use `--retranslate`. Mudanças no glossário/instruções reprocessam traduções
+automáticas na próxima execução; os valores existentes permanecem publicados até
+o campo ser processado. Candidatos `needs_review` só são reenviados com
+`--retry-review`, mesmo após trocar provedor ou glossário. Mudanças não substituem
+revisões explícitas. Para alterar uma revisão, use `review` novamente.
+
+A migração adiciona `provider` a `translation_jobs` com backup e preserva os
+registros legados da OpenAI. Novas traduções e erros identificam seu provedor;
+tokens DeepSeek (`prompt_tokens`/`completion_tokens`) são normalizados no relatório.
+DeepSeek garante JSON válido, mas não o JSON Schema da aplicação: a estrutura,
+tipos, chaves dos lotes e marcadores continuam sendo verificados localmente.
+Respostas vazias, truncadas ou interrompidas não são publicadas. Não há troca
+automática de provedor ao atingir limite ou erro de autenticação.
 
 ```sh
 uv run python translate_cards.py review --card-id 3 --field effect_text --text 'Draw 1 card.'
@@ -153,9 +170,11 @@ pnpm exec tsc --noEmit
 pnpm build
 ```
 
-Os testes Python usam SQLite temporário e respostas OpenAI simuladas. Não consomem
+Os testes Python usam SQLite temporário e respostas OpenAI/DeepSeek simuladas. Não consomem
 créditos e não verificam acesso ao modelo nem qualidade linguística real.
 
 Referências: [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna),
 [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+[DeepSeek API](https://api-docs.deepseek.com/),
+[DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode),
 [SQLite backup](https://nodejs.org/api/sqlite.html#sqlitebackupsourcedb-path-options).

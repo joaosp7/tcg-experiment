@@ -153,6 +153,86 @@ class ArchiveTest(unittest.TestCase):
         t.save_job(self.db, self.card(), "effect_text", "new", t.DEFAULT_MODEL, "openai", "failed", None, "Rate limit")
         self.assertIsNone(self.card()["effect_text_en"])
 
+    def test_provider_switch_preserves_validated_and_review_candidates(self):
+        for status in ("validated", "needs_review"):
+            t.save_job(self.db, self.card(), "effect_text", t.digest(GLOSSARY), t.DEFAULT_MODEL, "openai", status, "Draw 1 card.")
+            job = dict(self.db.execute("SELECT * FROM translation_jobs WHERE card_id=1").fetchone())
+            self.assertFalse(t.pending(self.card(), "effect_text", job, t.digest(GLOSSARY), "deepseek-flash", options(provider="deepseek")))
+        self.assertTrue(t.pending(self.card(), "effect_text", job, t.digest(GLOSSARY), "deepseek-flash", options(provider="deepseek", retry_review=True)))
+
+    def test_cache_cannot_mix_providers_even_with_identical_model_names(self):
+        t.save_job(self.db, self.card(), "effect_text", t.digest(GLOSSARY), "shared-model", "openai", "validated", "OpenAI result.")
+        result = {"translation": "Draw 1 card.", "issues": [], "usage": {}, "response_id": "deepseek1"}
+        with patch.object(t.DeepSeekTranslator, "__init__", return_value=None), patch.object(t.DeepSeekTranslator, "translate", return_value=result) as api:
+            t.run(self.db, GLOSSARY, options(provider="deepseek", model="shared-model", fields=["effect_text"]))
+            self.assertEqual(api.call_count, 1)
+        self.assertEqual(self.card()["effect_text_en"], "OpenAI result.")
+        job = dict(self.db.execute("SELECT * FROM translation_jobs WHERE card_id=2").fetchone())
+        self.assertEqual(job["provider"], "deepseek")
+        self.assertEqual(job["method"], "deepseek")
+
+    def test_provider_migration_keeps_legacy_translations_and_metadata(self):
+        t.save_job(self.db, self.card(), "effect_text", "old", t.DEFAULT_MODEL, "openai", "validated", "Draw 1 card.")
+        self.db.execute("DROP INDEX translation_cache")
+        self.db.execute("ALTER TABLE translation_jobs DROP COLUMN provider")
+        self.db.commit()
+        t.migrate(self.db, self.path)
+        job = dict(self.db.execute("SELECT * FROM translation_jobs WHERE card_id=1").fetchone())
+        self.assertEqual(job["provider"], "openai")
+        self.assertEqual(job["translation"], "Draw 1 card.")
+        self.assertEqual(self.card()["effect_text_en"], "Draw 1 card.")
+
+
+class DeepSeekProviderTest(unittest.TestCase):
+    def translator(self):
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "deepseek-test-key"}):
+            return t.DeepSeekTranslator("deepseek-flash")
+
+    def response(self, answer, reason="stop", usage=None):
+        return io.BytesIO(json.dumps({"id": "ds1", "choices": [{"finish_reason": reason, "message": {"content": json.dumps(answer)}}],
+                                     "usage": usage or {"prompt_tokens": 20, "completion_tokens": 8}}).encode())
+
+    def test_chat_request_uses_deepseek_key_endpoint_and_json_output(self):
+        answer = {"translation": "__BD_TOKEN_000__Draw 1 card.", "needs_review": False, "notes": ""}
+        with patch.object(t, "urlopen", return_value=self.response(answer)) as api:
+            result = self.translator().translate("effect_text", "⁅自動⁆１枚引く。", {}, GLOSSARY)
+        request = api.call_args.args[0]
+        body = json.loads(request.data)
+        self.assertEqual(request.full_url, "https://api.deepseek.com/chat/completions")
+        self.assertEqual(request.get_header("Authorization"), "Bearer deepseek-test-key")
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertIn("EXAMPLE JSON OUTPUT", body["messages"][0]["content"])
+        self.assertNotIn("store", body)
+        self.assertEqual(result["translation"], "⁅Auto⁆Draw 1 card.")
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(result["usage"]["input_tokens"], 20)
+        self.assertEqual(result["usage"]["output_tokens"], 8)
+
+    def test_truncated_and_empty_responses_are_not_published(self):
+        answer = {"translation": "Name", "needs_review": False, "notes": ""}
+        for reason in ("length", "content_filter", "aborted"):
+            with self.subTest(reason=reason), patch.object(t, "urlopen", return_value=self.response(answer, reason)):
+                result = self.translator().translate("name", "名前", {}, GLOSSARY)
+                self.assertIsNone(result["translation"])
+                self.assertTrue(result["issues"])
+        empty = io.BytesIO(json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}).encode())
+        with patch.object(t, "urlopen", return_value=empty):
+            self.assertIsNone(self.translator().translate("name", "名前", {}, GLOSSARY)["translation"])
+
+    def test_json_mode_still_validates_schema_and_batch_keys_locally(self):
+        items = [{"key": "a", "field": "name", "source": "名前", "context": {}}]
+        for answer in ({"wrong": {"translation": "Name", "needs_review": False, "notes": ""}},
+                       {"a": {"translation": "Name", "needs_review": "false", "notes": ""}}):
+            with self.subTest(answer=answer), patch.object(t, "urlopen", return_value=self.response(answer)):
+                result = self.translator().translate_many(items, GLOSSARY)
+                self.assertIsNone(result["items"]["a"]["translation"])
+
+    def test_missing_deepseek_key_does_not_use_openai_credentials(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "openai-test-key"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "DEEPSEEK_API_KEY"):
+                t.DeepSeekTranslator("deepseek-flash")
+
 
 class ProviderTest(unittest.TestCase):
     def response(self, answer, status="completed", usage=None):
