@@ -14,7 +14,8 @@ export type DeckAction =
   | { type: "rename"; id: string; name: string }
   | { type: "delete"; id: string }
   | { type: "add"; id: string; cards: Array<{ cardId: number; quantity: number }> }
-  | { type: "quantity"; id: string; cardId: number; quantity: number }
+  | { type: "adjust"; id: string; cardId: number; delta: number }
+  | { type: "remove"; id: string; cardId: number; expectedQuantity: number }
   | { type: "move"; id: string; targetId: string; cardId: number; quantity: number };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -77,12 +78,21 @@ export function applyDeckAction(decks: Deck[], action: DeckAction, now = new Dat
         card.quantity += quantity;
       } else deck.cards.push({ cardId, quantity });
     }
-  } else if (action.type === "quantity") {
-    if (!positiveInt(action.cardId) || !Number.isSafeInteger(action.quantity) || action.quantity < 0) throw new Error("Enter a valid card quantity.");
+  } else if (action.type === "adjust") {
+    if (!positiveInt(action.cardId) || !Number.isSafeInteger(action.delta) || action.delta === 0) throw new Error("Enter a valid card quantity adjustment.");
     const card = deck.cards.find((item) => item.cardId === action.cardId);
     if (!card) throw new Error("This card is no longer in the deck.");
-    if (action.quantity === 0) deck.cards = deck.cards.filter((item) => item.cardId !== action.cardId);
-    else card.quantity = action.quantity;
+    const quantity = card.quantity + action.delta;
+    if (quantity < 0) throw new Error("Enter a quantity available in the source deck.");
+    if (!Number.isSafeInteger(quantity)) throw new Error("Card quantity is too large.");
+    if (quantity === 0) deck.cards = deck.cards.filter((item) => item.cardId !== action.cardId);
+    else card.quantity = quantity;
+  } else if (action.type === "remove") {
+    if (!positiveInt(action.cardId) || !positiveInt(action.expectedQuantity)) throw new Error("Enter a valid expected card quantity.");
+    const card = deck.cards.find((item) => item.cardId === action.cardId);
+    if (!card) throw new Error("This card is no longer in the deck.");
+    if (card.quantity !== action.expectedQuantity) throw new Error("This card's quantity changed in another tab. Review its current quantity before removing it.");
+    deck.cards = deck.cards.filter((item) => item.cardId !== action.cardId);
   } else {
     const target = next.find((item) => item.id === action.targetId);
     if (!target || target.id === deck.id) throw new Error("Choose a different destination deck.");

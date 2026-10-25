@@ -23,16 +23,16 @@ test("moving merges copies without mutating previous state", () => {
 test("rename, quantity updates, removal and deletion preserve other decks", () => {
   let decks = create(create([], "a"), "b");
   decks = applyDeckAction(decks, { type: "add", id: "a", cards: [{ cardId: 1, quantity: 1 }] });
-  decks = applyDeckAction(decks, { type: "quantity", id: "a", cardId: 1, quantity: 4 });
+  decks = applyDeckAction(decks, { type: "adjust", id: "a", cardId: 1, delta: 3 });
   assert.equal(decks[0].cards[0].quantity, 4);
-  decks = applyDeckAction(decks, { type: "quantity", id: "a", cardId: 1, quantity: 0 });
+  decks = applyDeckAction(decks, { type: "remove", id: "a", cardId: 1, expectedQuantity: 4 });
   assert.deepEqual(decks[0].cards, []);
   decks = applyDeckAction(decks, { type: "rename", id: "a", name: " Revised " });
   assert.equal(decks[0].name, "Revised");
   assert.equal(decks[0].createdAt, time);
   assert.deepEqual(applyDeckAction(decks, { type: "delete", id: "a" }), [decks[1]]);
   assert.throws(() => applyDeckAction(decks, { type: "rename", id: "a", name: " " }), /name/);
-  assert.throws(() => applyDeckAction(decks, { type: "quantity", id: "a", cardId: 1, quantity: -1 }), /quantity/);
+  assert.throws(() => applyDeckAction(decks, { type: "adjust", id: "a", cardId: 1, delta: 0 }), /quantity/);
 });
 
 test("corrupt or unsupported stored data is never overwritten", () => {
@@ -166,4 +166,80 @@ test("unsupported locking refuses to save without touching storage", async () =>
   const storage = { getItem() { accesses++; return null; }, setItem() { accesses++; } };
   await assert.rejects(persistDeckActionWithLock(storage, { type: "create", id: "a", name: "A" }, undefined), /cannot safely save/);
   assert.equal(accesses, 0);
+});
+
+function lockedCardFixture(quantity) {
+  const decks = applyDeckAction(create([], "a"), { type: "add", id: "a", cards: [{ cardId: 1, quantity }] });
+  let raw = JSON.stringify({ version: 1, decks });
+  let writes = 0;
+  const locks = queuedLocks();
+  const storage = {
+    getItem() { assert.equal(locks.active, true); return raw; },
+    setItem(key, value) { assert.equal(locks.active, true); writes++; raw = value; },
+  };
+  return {
+    mutate: (action) => persistDeckActionWithLock(storage, { id: "a", cardId: 1, ...action }, locks),
+    read: () => parseDeckStorage(raw).decks[0].cards,
+    writes: () => writes,
+  };
+}
+
+test("overlapping increments and mixed adjustments apply deltas to locked current quantities", async () => {
+  const plusPlus = lockedCardFixture(4);
+  await Promise.all([plusPlus.mutate({ type: "adjust", delta: 1 }), plusPlus.mutate({ type: "adjust", delta: 1 })]);
+  assert.deepEqual(plusPlus.read(), [{ cardId: 1, quantity: 6 }]);
+  const plusMinus = lockedCardFixture(4);
+  await Promise.all([plusMinus.mutate({ type: "adjust", delta: 1 }), plusMinus.mutate({ type: "adjust", delta: -1 })]);
+  assert.deepEqual(plusMinus.read(), [{ cardId: 1, quantity: 4 }]);
+  const addThenPlus = lockedCardFixture(4);
+  await Promise.all([
+    addThenPlus.mutate({ type: "add", cards: [{ cardId: 1, quantity: 3 }] }),
+    addThenPlus.mutate({ type: "adjust", delta: 1 }),
+  ]);
+  assert.deepEqual(addThenPlus.read(), [{ cardId: 1, quantity: 8 }]);
+});
+
+test("stale remove preserves concurrent additions and releases lock for a fresh remove", async () => {
+  const fixture = lockedCardFixture(4);
+  const results = await Promise.allSettled([
+    fixture.mutate({ type: "add", cards: [{ cardId: 1, quantity: 3 }] }),
+    fixture.mutate({ type: "remove", expectedQuantity: 4 }),
+  ]);
+  assert.equal(results[0].status, "fulfilled");
+  assert.equal(results[1].status, "rejected");
+  assert.match(results[1].reason.message, /changed/);
+  assert.deepEqual(fixture.read(), [{ cardId: 1, quantity: 7 }]);
+  assert.equal(fixture.writes(), 1);
+  await fixture.mutate({ type: "remove", expectedQuantity: 7 });
+  assert.deepEqual(fixture.read(), []);
+  assert.equal(fixture.writes(), 2);
+});
+
+test("invalid deltas, underflow, overflow and invalid remove expectations never write", async () => {
+  const fixture = lockedCardFixture(4);
+  for (const delta of [0, -5, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"]) {
+    await assert.rejects(fixture.mutate({ type: "adjust", delta }), /quantity|available/);
+    assert.deepEqual(fixture.read(), [{ cardId: 1, quantity: 4 }]);
+  }
+  for (const expectedQuantity of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "4"]) {
+    await assert.rejects(fixture.mutate({ type: "remove", expectedQuantity }), /quantity/);
+  }
+  const overflow = lockedCardFixture(Number.MAX_SAFE_INTEGER);
+  await assert.rejects(overflow.mutate({ type: "adjust", delta: 1 }), /large/);
+  assert.deepEqual(overflow.read(), [{ cardId: 1, quantity: Number.MAX_SAFE_INTEGER }]);
+  assert.equal(overflow.writes(), 0);
+  assert.equal(fixture.writes(), 0);
+});
+
+test("overlapping decrements from one remove once and reject the missing second card", async () => {
+  const fixture = lockedCardFixture(1);
+  const results = await Promise.allSettled([
+    fixture.mutate({ type: "adjust", delta: -1 }),
+    fixture.mutate({ type: "adjust", delta: -1 }),
+  ]);
+  assert.equal(results[0].status, "fulfilled");
+  assert.equal(results[1].status, "rejected");
+  assert.match(results[1].reason.message, /no longer/);
+  assert.deepEqual(fixture.read(), []);
+  assert.equal(fixture.writes(), 1);
 });

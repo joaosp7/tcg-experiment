@@ -11,7 +11,7 @@ import { loadDeckCards, type DeckCardLoad } from "@/lib/deck-card-loader";
 const control = "rounded border border-line bg-deep px-3 py-2 text-sm text-stock disabled:opacity-40";
 
 export function DeckDetail({ deckId }: { deckId: string }) {
-  const { decks, ready, pending, error, renameDeck, deleteDeck, setQuantity, moveCards } = useDecks();
+  const { decks, ready, pending, error, renameDeck, deleteDeck, adjustQuantity, removeCard, moveCards } = useDecks();
   const deck = decks.find((item) => item.id === deckId);
   const [result, setResult] = useState<{ deckId: string; key: string; progress: DeckCardLoad } | null>(null);
   const previousLoad = useRef<{ deckId: string; progress: DeckCardLoad } | null>(null);
@@ -104,10 +104,10 @@ export function DeckDetail({ deckId }: { deckId: string }) {
                     {card ? <Link href={`/cards/${item.cardId}`} className="break-words text-stock hover:text-gold">{name}</Link> : <p className="text-gold">{name}</p>}
                     <p className="text-xs text-mist">{description}</p>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button disabled={pending} type="button" aria-label={`Decrease quantity of ${name}`} onClick={async () => { setNotice(""); await setQuantity(deckId, item.cardId, item.quantity - 1); }} className={control}>−</button>
+                      <button disabled={pending} type="button" aria-label={`Decrease quantity of ${name}`} onClick={async () => { setNotice(""); await adjustQuantity(deckId, item.cardId, -1); }} className={control}>−</button>
                       <span className="font-mono text-sm" aria-label={`Quantity of ${name}`}>{item.quantity}</span>
-                      <button disabled={pending} type="button" aria-label={`Increase quantity of ${name}`} onClick={async () => { setNotice(""); await setQuantity(deckId, item.cardId, item.quantity + 1); }} className={control}>+</button>
-                      <button disabled={pending} type="button" aria-label={`Remove ${name}`} onClick={async () => { setNotice(""); await setQuantity(deckId, item.cardId, 0); }} className={control}>Remove</button>
+                      <button disabled={pending} type="button" aria-label={`Increase quantity of ${name}`} onClick={async () => { setNotice(""); await adjustQuantity(deckId, item.cardId, 1); }} className={control}>+</button>
+                      <button disabled={pending} type="button" aria-label={`Remove ${name}`} onClick={async () => { setNotice(""); await removeCard(deckId, item.cardId, item.quantity); }} className={control}>Remove</button>
                     </div>
                   </div>
                 </div>

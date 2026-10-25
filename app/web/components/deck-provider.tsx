@@ -36,6 +36,9 @@ function createStore() {
       publish({ decks, error: null });
       return true;
     } catch (error) {
+      // A rejected stale operation must show the latest saved quantities so
+      // the user can review the conflict before retrying.
+      reload();
       failure(error);
       return false;
     } finally {
@@ -71,7 +74,8 @@ function createStore() {
       }
       return commit({ type: "add", id, cards });
     },
-    setQuantity: (id: string, cardId: number, quantity: number) => commit({ type: "quantity", id, cardId, quantity }),
+    adjustQuantity: (id: string, cardId: number, delta: number) => commit({ type: "adjust", id, cardId, delta }),
+    removeCard: (id: string, cardId: number, expectedQuantity: number) => commit({ type: "remove", id, cardId, expectedQuantity }),
     moveCards: (id: string, targetId: string, cardId: number, quantity: number) => commit({ type: "move", id, targetId, cardId, quantity }),
     toggleCard(id: number) {
       if (!Number.isSafeInteger(id) || id < 1) return;
@@ -96,7 +100,7 @@ function createStore() {
   };
 }
 
-type DeckContextValue = Snapshot & Pick<ReturnType<typeof createStore>, "createDeck" | "renameDeck" | "deleteDeck" | "addCards" | "setQuantity" | "moveCards" | "toggleCard" | "setSelectedQuantity" | "setSelectionInvalid" | "setBuilderEnabled" | "clearSelection">;
+type DeckContextValue = Snapshot & Pick<ReturnType<typeof createStore>, "createDeck" | "renameDeck" | "deleteDeck" | "addCards" | "adjustQuantity" | "removeCard" | "moveCards" | "toggleCard" | "setSelectedQuantity" | "setSelectionInvalid" | "setBuilderEnabled" | "clearSelection">;
 const DeckContext = createContext<DeckContextValue | null>(null);
 
 export function DeckProvider({ children }: { children: ReactNode }) {

@@ -201,3 +201,36 @@ test("invalid copy drafts keep Add blocked after cached catalog hide/show", asyn
     assert.equal(copies().value, "0");
   } finally { await unmount(); }
 });
+
+test("two stale deck detail views both increment the latest locked quantity", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ cards: [card] }) });
+  try {
+    await mount(["a", "b"].map((id) => h(DeckProvider, { key: id }, h("section", { id }, h(DeckDetail, { deckId: "test" })))), [{ cardId: 1, quantity: 4 }]);
+    let release;
+    queue = new Promise((resolve) => { release = resolve; });
+    await act(async () => {
+      document.querySelector('#a button[aria-label^="Increase quantity"]').click();
+      document.querySelector('#b button[aria-label^="Increase quantity"]').click();
+    });
+    assert.deepEqual(saved(), [{ cardId: 1, quantity: 4 }]);
+    await act(async () => { release(); await queue; });
+    assert.deepEqual(saved(), [{ cardId: 1, quantity: 6 }]);
+  } finally { globalThis.fetch = originalFetch; await unmount(); }
+});
+
+test("stale Remove preserves concurrent additions and refreshes the displayed quantity", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ cards: [card] }) });
+  try {
+    await mount(h(DeckDetail, { deckId: "test" }), [{ cardId: 1, quantity: 4 }]);
+    // Another tab finishes its addition before this view receives its storage event.
+    window.localStorage.setItem(DECK_STORAGE_KEY, JSON.stringify({ version: 1, decks: [{ ...deck, cards: [{ cardId: 1, quantity: 7 }] }] }));
+    await click(document.querySelector('button[aria-label^="Remove "]'));
+    assert.deepEqual(saved(), [{ cardId: 1, quantity: 7 }]);
+    assert.match(document.querySelector('[role="alert"]').textContent, /changed/);
+    assert.equal(document.querySelector('span[aria-label^="Quantity of"]').textContent, "7");
+    await click(document.querySelector('button[aria-label^="Remove "]'));
+    assert.deepEqual(saved(), []);
+  } finally { globalThis.fetch = originalFetch; await unmount(); }
+});

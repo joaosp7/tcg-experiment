@@ -180,6 +180,9 @@ Abas abertas refletem alterações salvas. Dados inválidos são preservados e e
 um erro, assim como falhas de gravação; não há validação de regras de composição.
 Gravações entre abas são serializadas com Web Locks (HTTPS ou localhost em
 navegador compatível); sem esse recurso, a gravação é recusada com uma mensagem.
+Os botões +/− aplicam a diferença sobre a quantidade atual dentro do bloqueio.
+Se a quantidade mudou em outra aba, **Remove** preserva as cópias, mostra o
+conflito e atualiza a quantidade exibida para revisão antes de tentar novamente.
 Falhas na consulta dos detalhes das cartas não impedem editar as quantidades
 salvas, remover ou mover cartas. **Retry failed details** tenta novamente apenas
 os lotes pendentes, preservando os detalhes já carregados.
