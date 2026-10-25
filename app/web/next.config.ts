@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/": ["./data/cards.db"],
     "/cards/[cardId]": ["./data/cards.db"],
+    "/api/cards": ["./data/cards.db"],
   },
   images: {
     remotePatterns: [

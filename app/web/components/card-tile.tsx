@@ -1,10 +1,37 @@
+"use client";
+
 import { catalogNumber } from "@/lib/query";
 import type { CardSummary } from "@/lib/cards";
+import { useDecks } from "@/components/deck-provider";
 import Image from "next/image";
 import Link from "next/link";
 
-export function CardTile({ card, priority = false }: { card: CardSummary; priority?: boolean }) {
+export function CardTile({ card, priority = false, selectable = false }: { card: CardSummary; priority?: boolean; selectable?: boolean }) {
+  const { selectedCards, toggleCard, setSelectedQuantity, builderEnabled, ready } = useDecks();
+  const showControls = selectable && builderEnabled;
+  const quantity = selectedCards.find((item) => item.cardId === card.card_id)?.quantity ?? 0;
+  const selected = showControls && quantity > 0;
   return (
+    <div className={`flex h-full min-w-0 flex-col ${selected ? "ring-2 ring-gold ring-offset-2 ring-offset-deep" : ""}`}>
+      {showControls ? (
+        <div className="flex flex-col gap-2 border border-line bg-mat p-2 text-xs text-stock">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={!ready}
+            onChange={() => toggleCard(card.card_id)}
+            aria-label={`Select ${card.name} (${catalogNumber(card.card_id)})`}
+            className="size-4 shrink-0 accent-gold"
+          />
+          {selected ? "Selected" : "Select card"}
+        </label>
+        <label className="flex items-center justify-between gap-2">
+          Copies
+          <input type="number" min={0} step={1} value={quantity} disabled={!ready} aria-label={`Copies of ${card.name} (${catalogNumber(card.card_id)})`} onChange={(event) => setSelectedQuantity(card.card_id, event.target.value === "" ? 0 : event.target.valueAsNumber)} className="min-h-9 w-16 min-w-0 border border-line bg-deep px-2 text-stock" />
+        </label>
+        </div>
+      ) : null}
     <Link
       href={`/cards/${card.card_id}`}
       className="group flex h-full min-w-0 flex-col overflow-hidden bg-stock text-ink shadow-[0_12px_28px_rgba(0,0,0,0.32)] transition-transform duration-200 hover:-translate-y-1 motion-reduce:transition-none motion-reduce:hover:translate-none"
@@ -35,5 +62,6 @@ export function CardTile({ card, priority = false }: { card: CardSummary; priori
         {card.cost ? <span title={card.cost} className="truncate font-mono text-[0.7rem] leading-4 text-ink/80">{card.cost}</span> : null}
       </div>
     </Link>
+    </div>
   );
 }

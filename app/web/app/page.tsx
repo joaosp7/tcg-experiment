@@ -1,6 +1,7 @@
 import { searchCards, getFacets } from "@/lib/cards";
 import { PAGE_SIZE, parseCardQuery, toSearchParams } from "@/lib/query";
 import { CardTile } from "@/components/card-tile";
+import { CatalogSelection } from "@/components/catalog-selection";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
 import Link from "next/link";
@@ -29,6 +30,7 @@ async function Catalog({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
           : `${start.toLocaleString("en-US")}–${end.toLocaleString("en-US")} of ${result.total.toLocaleString("en-US")}`}
       </p>
       <Filters key={JSON.stringify(query)} query={query} facets={facets} />
+      <CatalogSelection />
       {result.cards.length === 0 ? (
         <div className="border border-dashed border-line px-4 py-10 text-center">
           {result.total === 0 ? (
@@ -54,7 +56,7 @@ async function Catalog({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
         <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {result.cards.map((card, index) => (
             <li key={card.card_id}>
-              <CardTile card={card} priority={result.page === 1 && index < 6} />
+              <CardTile card={card} priority={result.page === 1 && index < 6} selectable />
             </li>
           ))}
         </ul>

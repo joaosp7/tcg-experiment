@@ -259,6 +259,18 @@ export function getCard(cardId: number): CardDetail | null {
   };
 }
 
+export function getCardsByIds(cardIds: number[]): CardSummary[] {
+  const ids = [...new Set(cardIds)];
+  if (ids.length === 0) return [];
+  if (ids.length > 200 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error("Provide up to 200 positive card IDs.");
+  }
+  return getDb()
+    .prepare(`SELECT ${selectColumns(SUMMARY_COLUMNS)} FROM cards WHERE card_id IN (${ids.map(() => "?").join(", ")}) ORDER BY card_id`)
+    .all(...ids)
+    .map(summary);
+}
+
 export function getFacets(): Facets {
   if (globalForFacets.cardFacets) return globalForFacets.cardFacets;
 

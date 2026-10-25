@@ -146,3 +146,15 @@ test("databases without English columns still support display, search and filter
     assert.equal(searchCards({ ...query, q: "日本の名前" }).total, 1);
   });
 });
+
+test("deck lookups return current summaries, omit missing cards and validate IDs", async () => {
+  await withArchive(true, ({ getCardsByIds }) => {
+    assert.deepEqual(getCardsByIds([]), []);
+    const cards = getCardsByIds([2, 1, 1, 999]);
+    assert.deepEqual(cards.map((card) => card.card_id), [1, 2]);
+    assert.equal(cards[0].name, "Translated Name");
+    for (const ids of [[-1], [1.2], [NaN], Array.from({ length: 201 }, (_, i) => i + 1)]) {
+      assert.throws(() => getCardsByIds(ids));
+    }
+  });
+});
