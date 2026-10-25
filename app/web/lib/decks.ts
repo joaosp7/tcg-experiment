@@ -106,3 +106,16 @@ export function persistDeckAction(storage: Pick<Storage, "getItem" | "setItem">,
   storage.setItem(DECK_STORAGE_KEY, JSON.stringify({ version: 1, decks } satisfies DeckStorage));
   return decks;
 }
+
+export async function persistDeckActionWithLock(
+  storage: Pick<Storage, "getItem" | "setItem">,
+  action: DeckAction,
+  locks: Pick<LockManager, "request"> | undefined,
+): Promise<Deck[]> {
+  if (!locks) {
+    throw new Error("This browser cannot safely save decks across tabs. Use a browser with Web Locks support on HTTPS or localhost.");
+  }
+  // Read only after acquiring the shared origin-wide lock so queued mutations
+  // apply to the latest saved state, including changes from another tab.
+  return locks.request(DECK_STORAGE_KEY, { mode: "exclusive" }, () => persistDeckAction(storage, action));
+}

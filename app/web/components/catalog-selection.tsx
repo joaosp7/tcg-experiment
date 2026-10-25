@@ -8,7 +8,7 @@ const button = "min-h-10 border border-gold px-3 py-2 text-sm text-gold disabled
 const field = "min-h-10 min-w-0 border border-line bg-deep px-3 py-2 text-sm text-stock";
 
 export function CatalogSelection() {
-  const { decks, ready, error, createDeck, addCards, selectedCards, clearSelection, builderEnabled, setBuilderEnabled } = useDecks();
+  const { decks, ready, error, pending, selectionInvalidIds, createDeck, addCards, selectedCards, clearSelection, builderEnabled, setBuilderEnabled } = useDecks();
   const [destination, setDestination] = useState("");
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
@@ -16,10 +16,10 @@ export function CatalogSelection() {
   const destinationId = decks.some((deck) => deck.id === destination) ? destination : decks[0]?.id ?? "";
   const copyCount = selectedCards.reduce((total, card) => total + card.quantity, 0);
 
-  function create(event: FormEvent<HTMLFormElement>) {
+  async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
-    const deckId = createDeck(name);
+    const deckId = await createDeck(name);
     if (deckId) {
       setDestination(deckId);
       setName("");
@@ -27,12 +27,12 @@ export function CatalogSelection() {
     }
   }
 
-  function add() {
+  async function add() {
     setMessage("");
     const deck = decks.find((entry) => entry.id === destinationId);
-    if (!deck || !selectedCards.length) return;
+    if (!deck || !selectedCards.length || selectionInvalidIds.length || pending) return;
     const count = copyCount;
-    if (addCards(deck.id, selectedCards)) {
+    if (await addCards(deck.id, selectedCards)) {
       clearSelection();
       setMessage(`Added ${count} ${count === 1 ? "card" : "cards"} to “${deck.name}”.`);
     }
@@ -44,7 +44,7 @@ export function CatalogSelection() {
         <div>
           <p className="font-display text-xl tracking-wide text-stock">Build a deck</p>
         </div>
-        <button type="button" role="switch" aria-label="Build a deck" aria-checked={builderEnabled} aria-controls={`${id}-controls`} onClick={() => setBuilderEnabled(!builderEnabled)} className="flex min-h-10 items-center gap-2 text-sm text-stock">
+        <button type="button" role="switch" disabled={pending} aria-label="Build a deck" aria-checked={builderEnabled} aria-controls={`${id}-controls`} onClick={() => setBuilderEnabled(!builderEnabled)} className="flex min-h-10 items-center gap-2 text-sm text-stock">
           <span>{builderEnabled ? "On" : "Off"}</span>
           <span className={`flex h-6 w-11 items-center rounded-full border p-0.5 ${builderEnabled ? "justify-end border-gold bg-gold" : "justify-start border-line bg-deep"}`}>
             <span className={`size-4 rounded-full ${builderEnabled ? "bg-ink" : "bg-mist"}`} />
@@ -58,7 +58,7 @@ export function CatalogSelection() {
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <p aria-live="polite" className="self-center font-mono text-sm text-stock">{selectedCards.length} selected · {copyCount} copies</p>
-        <button type="button" onClick={() => { clearSelection(); setMessage(""); }} disabled={!selectedCards.length} className="min-h-10 px-2 text-sm text-mist underline underline-offset-2 disabled:opacity-40">Clear selection</button>
+        <button type="button" onClick={() => { clearSelection(); setMessage(""); }} disabled={pending || (!selectedCards.length && !selectionInvalidIds.length)} className="min-h-10 px-2 text-sm text-mist underline underline-offset-2 disabled:opacity-40">Clear selection</button>
         <div className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-72">
           <label htmlFor={`${id}-destination`} className="text-xs text-mist">Destination deck</label>
           <select id={`${id}-destination`} value={destinationId} onChange={(event) => { setDestination(event.target.value); setMessage(""); }} disabled={!ready || !decks.length} className={field}>
@@ -66,14 +66,15 @@ export function CatalogSelection() {
             {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name}</option>)}
           </select>
         </div>
-        <button type="button" onClick={add} disabled={!ready || !destinationId || !selectedCards.length} className={button}>Add to deck</button>
+        <button type="button" onClick={add} disabled={!ready || pending || !destinationId || !selectedCards.length || selectionInvalidIds.length > 0} className={button}>Add to deck</button>
       </div>
+      {selectionInvalidIds.length ? <p role="alert" className="text-sm text-gold">Correct the copy counts before adding cards to a deck.</p> : null}
       <form onSubmit={create} className="flex flex-wrap items-end gap-3 border-t border-line pt-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-72">
           <label htmlFor={`${id}-name`} className="text-xs text-mist">New deck name</label>
           <input id={`${id}-name`} value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={!ready} placeholder="e.g. Black / Blue" className={field} />
         </div>
-        <button type="submit" disabled={!ready || !name.trim()} className={button}>Create deck</button>
+        <button type="submit" disabled={!ready || pending || !name.trim()} className={button}>Create deck</button>
       </form>
       {!ready ? <p role="status" className="text-sm text-mist">Loading your decks…</p> : null}
       {error ? <p role="alert" className="text-sm text-gold">{error}</p> : null}

@@ -3,11 +3,14 @@
 import { catalogNumber } from "@/lib/query";
 import type { CardSummary } from "@/lib/cards";
 import { useDecks } from "@/components/deck-provider";
+import { CopyCountInput } from "@/components/copy-count-input";
+import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
 export function CardTile({ card, priority = false, selectable = false }: { card: CardSummary; priority?: boolean; selectable?: boolean }) {
-  const { selectedCards, toggleCard, setSelectedQuantity, builderEnabled, ready } = useDecks();
+  const { selectedCards, toggleCard, setSelectionInvalid, selectionResetVersion, builderEnabled, ready, pending } = useDecks();
+  const [toggleVersion, setToggleVersion] = useState(0);
   const showControls = selectable && builderEnabled;
   const quantity = selectedCards.find((item) => item.cardId === card.card_id)?.quantity ?? 0;
   const selected = showControls && quantity > 0;
@@ -19,17 +22,24 @@ export function CardTile({ card, priority = false, selectable = false }: { card:
           <input
             type="checkbox"
             checked={selected}
-            disabled={!ready}
-            onChange={() => toggleCard(card.card_id)}
+            disabled={!ready || pending}
+            onChange={() => {
+              setSelectionInvalid(card.card_id, false);
+              setToggleVersion((value) => value + 1);
+              toggleCard(card.card_id);
+            }}
             aria-label={`Select ${card.name} (${catalogNumber(card.card_id)})`}
             className="size-4 shrink-0 accent-gold"
           />
           {selected ? "Selected" : "Select card"}
         </label>
-        <label className="flex items-center justify-between gap-2">
-          Copies
-          <input type="number" min={0} step={1} value={quantity} disabled={!ready} aria-label={`Copies of ${card.name} (${catalogNumber(card.card_id)})`} onChange={(event) => setSelectedQuantity(card.card_id, event.target.value === "" ? 0 : event.target.valueAsNumber)} className="min-h-9 w-16 min-w-0 border border-line bg-deep px-2 text-stock" />
-        </label>
+        <CopyCountInput
+          cardId={card.card_id}
+          name={`${card.name} (${catalogNumber(card.card_id)})`}
+          value={quantity}
+          disabled={!ready || pending}
+          resetVersion={`${selectionResetVersion}:${toggleVersion}`}
+        />
         </div>
       ) : null}
     <Link

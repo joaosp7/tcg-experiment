@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 
 const source = readFileSync(new URL("../lib/decks.ts", import.meta.url), "utf8");
-const { applyDeckAction, parseDeckStorage, persistDeckAction, DECK_STORAGE_KEY } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
+const { applyDeckAction, parseDeckStorage, persistDeckAction, persistDeckActionWithLock, DECK_STORAGE_KEY } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
 const time = "2026-10-25T12:00:00.000Z";
 const create = (decks, id) => applyDeckAction(decks, { type: "create", id, name: ` Deck ${id} ` }, time);
 
@@ -101,4 +101,69 @@ test("invalid bulk quantities and overflow abort the entire addition without cha
   ] }), /too large/);
   assert.equal(writes, 0);
   assert.deepEqual(parseDeckStorage(raw).decks, original);
+});
+
+// Model separate tabs sharing an origin-wide lock queue. The gate lets mutations
+// overlap while another writer owns the lock; reads must wait for its release.
+function queuedLocks(gate = Promise.resolve()) {
+  let tail = gate;
+  let active = false;
+  return {
+    get active() { return active; },
+    request(name, options, callback) {
+      assert.equal(name, DECK_STORAGE_KEY);
+      assert.equal(options.mode, "exclusive");
+      const result = tail.then(async () => {
+        assert.equal(active, false);
+        active = true;
+        try { return await callback(); } finally { active = false; }
+      });
+      tail = result.catch(() => undefined);
+      return result;
+    },
+  };
+}
+
+test("overlapping tab mutations wait for the lock and retain both updates", async () => {
+  let release;
+  const locks = queuedLocks(new Promise((resolve) => { release = resolve; }));
+  let raw = JSON.stringify({ version: 1, decks: create([], "a") });
+  let reads = 0;
+  let writes = 0;
+  const storage = {
+    getItem() { assert.equal(locks.active, true); reads++; return raw; },
+    setItem(key, value) { assert.equal(locks.active, true); writes++; raw = value; },
+  };
+  const firstTab = persistDeckActionWithLock(storage, { type: "add", id: "a", cards: [{ cardId: 1, quantity: 2 }] }, locks);
+  const secondTab = persistDeckActionWithLock(storage, { type: "add", id: "a", cards: [{ cardId: 1, quantity: 3 }] }, locks);
+  await Promise.resolve();
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+  // A writer already holding the lock finishes before the two queued additions.
+  raw = JSON.stringify({ version: 1, decks: applyDeckAction(create([], "a"), { type: "add", id: "a", cards: [{ cardId: 1, quantity: 4 }] }) });
+  release();
+  const results = await Promise.all([firstTab, secondTab]);
+  assert.equal(results[0][0].cards[0].quantity, 6);
+  assert.equal(results[1][0].cards[0].quantity, 9);
+  assert.equal(parseDeckStorage(raw).decks[0].cards[0].quantity, 9);
+  assert.equal(reads, 2);
+  assert.equal(writes, 2);
+});
+
+test("locked save failure preserves stored data and releases the lock for the next writer", async () => {
+  const locks = queuedLocks();
+  const previous = JSON.stringify({ version: 1, decks: create([], "a") });
+  let raw = previous;
+  const storage = { getItem: () => raw, setItem(key, value) { raw = value; } };
+  await assert.rejects(persistDeckActionWithLock({ ...storage, setItem() { throw new Error("Quota exceeded"); } }, { type: "delete", id: "a" }, locks), /Quota/);
+  assert.equal(raw, previous);
+  await persistDeckActionWithLock(storage, { type: "create", id: "b", name: "B" }, locks);
+  assert.deepEqual(parseDeckStorage(raw).decks.map((deck) => deck.id), ["a", "b"]);
+});
+
+test("unsupported locking refuses to save without touching storage", async () => {
+  let accesses = 0;
+  const storage = { getItem() { accesses++; return null; }, setItem() { accesses++; } };
+  await assert.rejects(persistDeckActionWithLock(storage, { type: "create", id: "a", name: "A" }, undefined), /cannot safely save/);
+  assert.equal(accesses, 0);
 });

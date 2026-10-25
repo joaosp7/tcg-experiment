@@ -166,6 +166,8 @@ controles de deck, a seleção nas cartas e o campo **Copies**. Marcar uma carta
 seleciona uma cópia; informar uma quantidade positiva também seleciona a carta.
 Zero ou desmarcar remove a carta da seleção. Desligar o painel oculta os controles
 e preserva a seleção enquanto você navega; recarregar reinicia o modo e a seleção.
+O campo de cópias aceita apenas inteiros não negativos. Valores inválidos exibem
+um erro e bloqueiam **Add to deck** até serem corrigidos ou a seleção ser limpa.
 A seleção permanece durante a navegação e é limpa após adicionar as cartas.
 No deck, ajuste quantidades, remova cartas ou mova cópias para outro deck.
 Adicionar novamente uma carta incrementa sua quantidade; o catálogo não é alterado.
@@ -176,6 +178,11 @@ Não há autenticação: os dados pertencem ao perfil do navegador e à origem d
 sem sincronização entre dispositivos. Limpar os dados do site apaga os decks.
 Abas abertas refletem alterações salvas. Dados inválidos são preservados e exibem
 um erro, assim como falhas de gravação; não há validação de regras de composição.
+Gravações entre abas são serializadas com Web Locks (HTTPS ou localhost em
+navegador compatível); sem esse recurso, a gravação é recusada com uma mensagem.
+Falhas na consulta dos detalhes das cartas não impedem editar as quantidades
+salvas, remover ou mover cartas. **Retry failed details** tenta novamente apenas
+os lotes pendentes, preservando os detalhes já carregados.
 
 ### Verificação local
 
