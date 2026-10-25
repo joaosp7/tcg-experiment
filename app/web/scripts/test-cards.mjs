@@ -51,7 +51,10 @@ async function withArchive(english, check) {
     delete globalThis.cardFacets;
     const cards = await import(pathToFileURL(path.join(folder, "cards.mjs")).href);
     const queries = await import(pathToFileURL(path.join(folder, "query.mjs")).href);
-    await check(cards, queries);
+    const routeSource = readFileSync(path.join(webRoot, "app/api/cards/route.ts"), "utf8").replaceAll('"@/lib/cards"', '"./cards.mjs"');
+    writeFileSync(path.join(folder, "route.mjs"), stripTypeScriptTypes(routeSource));
+    const route = await import(pathToFileURL(path.join(folder, "route.mjs")).href);
+    await check(cards, queries, route);
   } finally {
     globalThis.cardsDb?.close();
     delete globalThis.cardsDb;
@@ -144,5 +147,31 @@ test("databases without English columns still support display, search and filter
     assert.equal(getFacets().typeLabels["ユニット"], "ユニット");
     assert.equal(searchCards({ ...query, type: "ユニット", attribute: "人間" }).total, 2);
     assert.equal(searchCards({ ...query, q: "日本の名前" }).total, 1);
+  });
+});
+
+test("deck lookups return current summaries, omit missing cards and validate IDs", async () => {
+  await withArchive(true, ({ getCardsByIds }) => {
+    assert.deepEqual(getCardsByIds([]), []);
+    const cards = getCardsByIds([2, 1, 1, 999]);
+    assert.deepEqual(cards.map((card) => card.card_id), [1, 2]);
+    assert.equal(cards[0].name, "Translated Name");
+    for (const ids of [[-1], [1.2], [NaN], Array.from({ length: 201 }, (_, i) => i + 1)]) {
+      assert.throws(() => getCardsByIds(ids));
+    }
+  });
+});
+
+test("card lookup HTTP handler rejects invalid IDs and returns bounded catalog summaries", async () => {
+  await withArchive(true, async (_cards, _query, { GET }) => {
+    const request = (search) => new Request(`http://localhost/api/cards${search}`);
+    for (const search of ["", "?ids=", "?ids=0", "?ids=-1", "?ids=1.5", "?ids=1,no", `?ids=${Array.from({ length: 201 }, (_, i) => i + 1).join(",")}`]) {
+      assert.equal(GET(request(search)).status, 400, search);
+    }
+    const response = GET(request("?ids=2,1,1,999"));
+    assert.equal(response.status, 200);
+    const { cards } = await response.json();
+    assert.deepEqual(cards.map((card) => card.card_id), [1, 2]);
+    assert.equal(cards[0].name, "Translated Name");
   });
 });

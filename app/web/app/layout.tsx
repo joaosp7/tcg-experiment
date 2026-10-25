@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Barlow_Condensed, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { DeckProvider } from "@/components/deck-provider";
 
 const display = Barlow_Condensed({
   subsets: ["latin"],
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${display.variable} ${mono.variable} h-full antialiased`}>
       <body className="min-h-full">
+        <DeckProvider>
         <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 py-6 sm:px-6">
           <header className="mb-6 border-b border-line pb-4">
             <Link href="/" className="inline-block">
@@ -35,9 +37,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </p>
               <p className="mt-1 text-[0.7rem] tracking-[0.32em] text-gold uppercase">Card catalog</p>
             </Link>
+            <nav aria-label="Main navigation" className="mt-4 flex gap-5 text-sm text-gold">
+              <Link href="/" className="hover:underline">Catalog</Link>
+              <Link href="/decks" className="hover:underline">My decks</Link>
+            </nav>
           </header>
-          {children}
+          <main>{children}</main>
         </div>
+        </DeckProvider>
       </body>
     </html>
   );

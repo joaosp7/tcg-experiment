@@ -2,7 +2,7 @@
 // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- The CLI invokes this function with its page.
 async (page) => {
   await page.reload();
-  const selector = 'ul.grid > li > a[href^="/cards/"]';
+  const selector = 'ul.grid:visible > li a[href^="/cards/"]';
   await page.locator(selector).nth(5).waitFor();
   await page.evaluate(() => document.fonts.ready);
   await page.mouse.move(0, 0);
@@ -15,7 +15,7 @@ async (page) => {
       const image = card.firstElementChild.getBoundingClientRect();
       return { width: box.width, height: box.height, imageWidth: image.width, imageHeight: image.height };
     }));
-    const gridDisplay = await page.locator("ul.grid").evaluate((grid) => getComputedStyle(grid).display);
+    const gridDisplay = await page.locator("ul.grid:visible").evaluate((grid) => getComputedStyle(grid).display);
     if (gridDisplay !== "grid" || measurements.some((card) => card.imageHeight <= 0)) {
       throw new Error("Catalog CSS is missing: run the configured Turbopack server before measuring.");
     }
