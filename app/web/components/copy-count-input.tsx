@@ -22,7 +22,12 @@ export function CopyCountInput({ cardId, name, value, disabled, resetVersion }: 
     setDraft({ text: String(value), committedValue: value, resetVersion, invalid: false });
   }
 
-  useEffect(() => () => setSelectionInvalid(cardId, false), [cardId, setSelectionInvalid]);
+  useEffect(() => {
+    // Activity preserves drafts while hidden, but disconnects effects. Restore
+    // the add-block whenever this catalog becomes active again.
+    setSelectionInvalid(cardId, draft.invalid);
+    return () => setSelectionInvalid(cardId, false);
+  }, [cardId, draft.invalid, setSelectionInvalid]);
 
   function edit(text: string) {
     const quantity = Number(text);

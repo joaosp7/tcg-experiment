@@ -87,6 +87,7 @@ function createStore() {
     },
     setSelectionInvalid(cardId: number, invalid: boolean) {
       if (!Number.isSafeInteger(cardId) || cardId < 1) return;
+      if (snapshot.selectionInvalidIds.includes(cardId) === invalid) return;
       const ids = snapshot.selectionInvalidIds.filter((item) => item !== cardId);
       publish({ selectionInvalidIds: invalid ? [...ids, cardId] : ids });
     },

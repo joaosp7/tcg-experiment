@@ -57,7 +57,7 @@ Object.defineProperty(navigator, "locks", { value: {
     return result;
   },
 } });
-const { createElement: h, act } = await import("react");
+const { createElement: h, act, Activity } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { DeckProvider, useDecks } = await import(urlFor("deck-provider"));
 const { CatalogSelection } = await import(urlFor("catalog-selection"));
@@ -173,5 +173,31 @@ test("independent providers queue writes and reload changes from storage events"
     assert.deepEqual(stores.b.decks[0].cards, saved());
     assert.equal(stores.a.pending, false);
     assert.equal(stores.b.pending, false);
+  } finally { await unmount(); }
+});
+
+test("invalid copy drafts keep Add blocked after cached catalog hide/show", async () => {
+  const children = [h(CatalogSelection, { key: "toolbar" }), h(CardTile, { key: "card", card, selectable: true })];
+  const tree = (mode) => h(Activity, { mode }, children);
+  try {
+    await mount(tree("visible"));
+    await click(document.querySelector('[role="switch"]'));
+    await edit("4");
+    await edit("2.5");
+    assert.equal(button("Add to deck").disabled, true);
+    for (let visit = 0; visit < 2; visit++) {
+      await act(async () => root.render(h(DeckProvider, null, tree("hidden"))));
+      await act(async () => root.render(h(DeckProvider, null, tree("visible"))));
+      assert.equal(copies().value, "2.5");
+      assert.equal(copies().getAttribute("aria-invalid"), "true");
+      assert.equal(button("Add to deck").disabled, true);
+      await click(button("Add to deck"));
+      assert.deepEqual(saved(), []);
+    }
+    await edit("3");
+    assert.equal(button("Add to deck").disabled, false);
+    await click(button("Add to deck"));
+    assert.deepEqual(saved(), [{ cardId: 1, quantity: 3 }]);
+    assert.equal(copies().value, "0");
   } finally { await unmount(); }
 });
